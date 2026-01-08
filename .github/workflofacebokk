@@ -1,0 +1,1186 @@
+🚀 FACEBOOK CLONE - MASTER DEPLOYMENT GUIDE
+Everything in One Document - Follow From Top to Bottom
+PART 1: CREATE ACCOUNTS (5 MINUTES)
+1.1 GitHub Account
+Link: https://github.com
+Click "Sign up"
+Enter email, password, username
+Verify email
+✅ Done
+1.2 MongoDB Account
+Link: https://www.mongodb.com/cloud/atlas
+Click "Try Free"
+Sign up with email
+Verify email
+✅ Done
+1.3 Railway Account
+Link: https://railway.app
+Click "Login"
+Click "GitHub"
+Authorize Railway
+✅ Done
+1.4 Vercel Account
+Link: https://vercel.com
+Click "Sign Up"
+Click "Continue with GitHub"
+Authorize Vercel
+✅ Done
+PART 2: INSTALL SOFTWARE (10 MINUTES)
+2.1 Node.js
+Link: https://nodejs.org
+Download LTS version (not latest)
+Click next → next → finish
+Open terminal and run:
+node --version
+Should show: v18.x.x or similar ✅
+2.2 Git
+Link: https://git-scm.com/download
+Download for your operating system
+Click next → next → finish
+Open terminal and run:
+git --version
+Should show: git version 2.x.x ✅
+2.3 VS Code (Optional but recommended)
+Link: https://code.visualstudio.com
+Download and install
+Open it
+✅ Done
+PART 3: SETUP MONGODB DATABASE (10 MINUTES)
+3.1 Create Cluster
+Go to: https://cloud.mongodb.com
+Login with your account
+Click "Create a deployment"
+Select M0 Shared (Free)
+Choose your region (closest to you)
+Click "Create"
+Wait 1-3 minutes
+✅ Cluster created
+3.2 Create Database User
+Click "Database Access" (left menu)
+Click "Add new database user"
+Username: rivkacohen419_db_user
+Password: Create a STRONG password (write it down!)
+Privileges: "Read and write to any database"
+Click "Add User"
+✅ User created
+3.3 Allow Access from Anywhere
+Click "Network Access" (left menu)
+Click "Add IP Address"
+Click "Allow access from anywhere"
+Click "Confirm"
+✅ IP whitelisted
+3.4 Get Connection String
+Click "Databases" (left menu)
+Click "Connect" button
+Click "Drivers"
+Select Node.js (version 4.x)
+Copy the connection string
+It looks like:
+mongodb+srv://rivkacohen419_db_user:<password>@cluster0.xxxxx.mongodb.net/?appName=Cluster0
+Replace <password> with your actual password
+Replace /?appName=Cluster0 with /facebook-clone?appName=Cluster0
+Save this URL - you'll need it!
+✅ Connection string ready
+PART 4: CREATE BACKEND (15 MINUTES)
+4.1 Create Backend Folder
+Open terminal and run:
+mkdir facebook-clone-backend
+cd facebook-clone-backend
+npm init -y
+npm install express mongoose bcryptjs jsonwebtoken cors dotenv
+4.2 Create server.js File
+In your facebook-clone-backend folder, create a file called server.js and copy this entire code:
+const express = require('express');
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const cors = require('cors');
+require('dotenv').config();
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// MongoDB Connection
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log('✅ Connected to MongoDB!'))
+.catch(err => console.log('❌ MongoDB Error:', err));
+
+// ==================== SCHEMAS ====================
+
+const userSchema = new mongoose.Schema({
+  username: { type: String, unique: true, required: true },
+  email: { type: String, unique: true, required: true },
+  password: { type: String, required: true },
+  bio: { type: String, default: '' },
+  profilePic: { type: String, default: 'https://via.placeholder.com/150' },
+  followers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  following: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  createdAt: { type: Date, default: Date.now },
+});
+
+const postSchema = new mongoose.Schema({
+  author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  content: { type: String, required: true },
+  image: { type: String, default: '' },
+  likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  comments: [{
+    author: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    text: String,
+    createdAt: { type: Date, default: Date.now },
+  }],
+  createdAt: { type: Date, default: Date.now },
+});
+
+const User = mongoose.model('User', userSchema);
+const Post = mongoose.model('Post', postSchema);
+
+// ==================== MIDDLEWARE ====================
+
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  
+  if (!token) return res.status(401).json({ error: 'No token provided' });
+  
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ error: 'Invalid token' });
+    req.user = user;
+    next();
+  });
+};
+
+// ==================== AUTH ROUTES ====================
+
+app.post('/auth/signup', async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+    
+    if (!username || !email || !password) {
+      return res.status(400).json({ error: 'All fields required' });
+    }
+    
+    const existingUser = await User.findOne({ $or: [{ email }, { username }] });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Email or username already exists' });
+    }
+    
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = new User({
+      username,
+      email,
+      password: hashedPassword,
+    });
+    
+    await user.save();
+    const token = jwt.sign({ id: user._id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        profilePic: user.profilePic,
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password required' });
+    }
+    
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ error: 'User not found' });
+    }
+    
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      return res.status(400).json({ error: 'Invalid password' });
+    }
+    
+    const token = jwt.sign({ id: user._id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        profilePic: user.profilePic,
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== POST ROUTES ====================
+
+app.post('/posts', authenticateToken, async (req, res) => {
+  try {
+    const { content, image } = req.body;
+    
+    if (!content) {
+      return res.status(400).json({ error: 'Content required' });
+    }
+    
+    const post = new Post({
+      author: req.user.id,
+      content,
+      image: image || '',
+    });
+    
+    await post.save();
+    await post.populate('author', 'username profilePic');
+    
+    res.json(post);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/posts', async (req, res) => {
+  try {
+    const posts = await Post.find()
+      .populate('author', 'username profilePic')
+      .populate('comments.author', 'username')
+      .populate('likes', 'username')
+      .sort({ createdAt: -1 })
+      .limit(50);
+    
+    res.json(posts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/posts/:id/like', authenticateToken, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    
+    const isLiked = post.likes.includes(req.user.id);
+    
+    if (isLiked) {
+      post.likes = post.likes.filter(id => id.toString() !== req.user.id);
+    } else {
+      post.likes.push(req.user.id);
+    }
+    
+    await post.save();
+    await post.populate('author', 'username profilePic');
+    
+    res.json(post);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/posts/:id/comment', authenticateToken, async (req, res) => {
+  try {
+    const { text } = req.body;
+    
+    if (!text) {
+      return res.status(400).json({ error: 'Comment text required' });
+    }
+    
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    
+    post.comments.push({
+      author: req.user.id,
+      text,
+    });
+    
+    await post.save();
+    await post.populate('comments.author', 'username profilePic');
+    
+    res.json(post);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/posts/:id', authenticateToken, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+    
+    if (post.author.toString() !== req.user.id) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+    
+    await Post.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Post deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== USER ROUTES ====================
+
+app.get('/users/:id', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id)
+      .select('-password')
+      .populate('followers', 'username profilePic')
+      .populate('following', 'username profilePic');
+    
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    
+    const posts = await Post.find({ author: req.params.id })
+      .populate('author', 'username profilePic')
+      .sort({ createdAt: -1 });
+    
+    res.json({ user, posts });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/users/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.id !== req.params.id) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+    
+    const { bio, profilePic } = req.body;
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { bio, profilePic },
+      { new: true }
+    ).select('-password');
+    
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/auth/me', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==================== START SERVER ====================
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`\n🚀 Server running on http://localhost:${PORT}`);
+  console.log(`📝 API ready for requests\n`);
+});
+4.3 Create .env File
+In your facebook-clone-backend folder, create a file called .env and paste:
+MONGODB_URI=mongodb+srv://rivkacohen419_db_user:YOUR_PASSWORD@cluster0.xxxxx.mongodb.net/facebook-clone?appName=Cluster0
+JWT_SECRET=facebook_clone_secret_key_12345
+PORT=5000
+NODE_ENV=development
+Replace:
+YOUR_PASSWORD with your MongoDB password
+cluster0.xxxxx.mongodb.net with your actual cluster URL
+4.4 Create .gitignore File
+In your facebook-clone-backend folder, create a file called .gitignore and paste:
+node_modules
+.env
+.DS_Store
+4.5 Test Backend Locally
+In terminal:
+node server.js
+You should see:
+✅ Connected to MongoDB!
+🚀 Server running on http://localhost:5000
+If you see this, your backend works! ✅
+Press Ctrl+C to stop the server.
+PART 5: UPLOAD BACKEND TO GITHUB (5 MINUTES)
+5.1 Create GitHub Repository
+Go to: https://github.com/new
+Repository name: facebook-clone-backend
+Description: "Facebook clone backend"
+Choose Public
+Click "Create repository"
+5.2 Upload Your Code
+In terminal (inside facebook-clone-backend folder):
+git init
+git add .
+git commit -m "Initial commit"
+git branch -M main
+git remote add origin https://github.com/YOUR_USERNAME/facebook-clone-backend.git
+git push -u origin main
+Replace YOUR_USERNAME with your actual GitHub username.
+5.3 Verify
+Go to: https://github.com/YOUR_USERNAME/facebook-clone-backend
+You should see all your files there!
+✅ Backend uploaded
+PART 6: DEPLOY BACKEND TO RAILWAY (5 MINUTES)
+6.1 Connect and Deploy
+Go to: https://railway.app/dashboard
+Click "New Project"
+Click "Deploy from GitHub repo"
+Search for facebook-clone-backend
+Click on it
+Click "Deploy Now"
+Wait 2-3 minutes for deployment
+6.2 Add Environment Variables
+In Railway, click your project
+Click "Variables" tab
+Click "Raw Editor"
+Paste:
+MONGODB_URI=mongodb+srv://rivkacohen419_db_user:YOUR_PASSWORD@cluster0.xxxxx.mongodb.net/facebook-clone?appName=Cluster0
+JWT_SECRET=facebook_clone_secret_key_12345
+NODE_ENV=production
+Click "Save"
+6.3 Get Your Backend URL
+Click "Settings" tab
+Find "Domains" section
+Copy your URL (looks like: https://facebook-clone-backend-production.up.railway.app)
+Save this URL - you need it for the frontend!
+6.4 Test Backend
+Open in browser:
+https://YOUR-RAILWAY-URL/posts
+Should return: []
+If you see this, your backend is live! ✅
+PART 7: CREATE FRONTEND (10 MINUTES)
+7.1 Create React App
+Open a NEW terminal (don't close the other one) and run:
+npx create-react-app facebook-clone-frontend
+cd facebook-clone-frontend
+npm install axios
+Wait for it to finish (this takes a few minutes).
+7.2 Create App.js
+Open src/App.js
+Delete everything in it
+Copy and paste this entire code:
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import './App.css';
+
+const API_URL = 'http://localhost:5000'; // Change this to your Railway URL
+
+function App() {
+  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [currentUser, setCurrentUser] = useState(null);
+  const [posts, setPosts] = useState([]);
+  const [newPost, setNewPost] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (token) {
+      fetchCurrentUser();
+      fetchPosts();
+    }
+  }, [token]);
+
+  const fetchCurrentUser = async () => {
+    try {
+      const res = await axios.get(`${API_URL}/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setCurrentUser(res.data);
+    } catch (err) {
+      console.error('Error fetching user:', err);
+    }
+  };
+
+  const fetchPosts = async () => {
+    try {
+      const res = await axios.get(`${API_URL}/posts`);
+      setPosts(res.data);
+    } catch (err) {
+      console.error('Error fetching posts:', err);
+    }
+  };
+
+  const createPost = async (e) => {
+    e.preventDefault();
+    if (!newPost.trim()) return;
+
+    setLoading(true);
+    try {
+      const res = await axios.post(
+        `${API_URL}/posts`,
+        { content: newPost },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setPosts([res.data, ...posts]);
+      setNewPost('');
+    } catch (err) {
+      alert('Error creating post: ' + err.response?.data?.error);
+    }
+    setLoading(false);
+  };
+
+  const likePost = async (postId) => {
+    try {
+      const res = await axios.post(
+        `${API_URL}/posts/${postId}/like`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setPosts(posts.map(p => p._id === postId ? res.data : p));
+    } catch (err) {
+      alert('Error liking post');
+    }
+  };
+
+  const deletePost = async (postId) => {
+    if (!window.confirm('Delete this post?')) return;
+
+    try {
+      await axios.delete(`${API_URL}/posts/${postId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setPosts(posts.filter(p => p._id !== postId));
+    } catch (err) {
+      alert('Error deleting post');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    setToken(null);
+    setCurrentUser(null);
+  };
+
+  if (!token) {
+    return <LoginForm setToken={setToken} />;
+  }
+
+  return (
+    <div className="container">
+      <header className="header">
+        <h1>📱 Facebook Clone</h1>
+        <div>
+          <span>{currentUser?.username}</span>
+          <button onClick={handleLogout} className="btn-logout">Logout</button>
+        </div>
+      </header>
+
+      <main className="main">
+        <div className="create-post">
+          <form onSubmit={createPost}>
+            <textarea
+              value={newPost}
+              onChange={(e) => setNewPost(e.target.value)}
+              placeholder="What's on your mind?"
+              className="post-input"
+            />
+            <button type="submit" disabled={loading} className="btn-post">
+              {loading ? 'Posting...' : 'Post'}
+            </button>
+          </form>
+        </div>
+
+        <div className="posts">
+          {posts.length === 0 ? (
+            <p className="no-posts">No posts yet. Be the first to post!</p>
+          ) : (
+            posts.map((post) => (
+              <div key={post._id} className="post">
+                <div className="post-header">
+                  <div>
+                    <strong>{post.author.username}</strong>
+                    <p className="post-date">
+                      {new Date(post.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                  {currentUser?._id === post.author._id && (
+                    <button
+                      onClick={() => deletePost(post._id)}
+                      className="btn-delete"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <p className="post-content">{post.content}</p>
+
+                <div className="post-actions">
+                  <button
+                    onClick={() => likePost(post._id)}
+                    className={`btn-action ${
+                      post.likes.some(l => l._id === currentUser?._id) ? 'liked' : ''
+                    }`}
+                  >
+                    👍 {post.likes.length}
+                  </button>
+                  <button className="btn-action">
+                    💬 {post.comments.length}
+                  </button>
+                </div>
+
+                {post.comments.length > 0 && (
+                  <div className="comments">
+                    <strong>Comments:</strong>
+                    {post.comments.map((comment, idx) => (
+                      <p key={idx} className="comment">
+                        <strong>{comment.author.username}:</strong> {comment.text}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function LoginForm({ setToken }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
+  const [isSignup, setIsSignup] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const endpoint = isSignup ? '/auth/signup' : '/auth/login';
+      const data = isSignup ? { username, email, password } : { email, password };
+
+      const res = await axios.post(`${API_URL}${endpoint}`, data);
+      localStorage.setItem('token', res.data.token);
+      setToken(res.data.token);
+    } catch (err) {
+      setError(err.response?.data?.error || 'An error occurred');
+    }
+
+    setLoading(false);
+  };
+
+  return (
+    <div className="login-container">
+      <div className="login-box">
+        <h1>📱 Facebook Clone</h1>
+        <form onSubmit={handleSubmit}>
+          {error && <div className="error">{error}</div>}
+
+          {isSignup && (
+            <input
+              type="text"
+              placeholder="Username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="input"
+              required
+            />
+          )}
+
+          <input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="input"
+            required
+          />
+
+          <input
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="input"
+            required
+          />
+
+          <button type="submit" disabled={loading} className="btn-submit">
+            {loading ? 'Loading...' : isSignup ? 'Sign Up' : 'Login'}
+          </button>
+        </form>
+
+        <button
+          onClick={() => setIsSignup(!isSignup)}
+          className="btn-toggle"
+        >
+          {isSignup ? '← Back to Login' : "Don't have an account? Sign up"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default App;
+7.3 Create App.css
+Open src/App.css
+Delete everything in it
+Copy and paste this entire code:
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  background-color: #f0f2f5;
+  color: #050505;
+}
+
+/* Login Page */
+.login-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.login-box {
+  background: white;
+  padding: 40px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  width: 100%;
+  max-width: 400px;
+}
+
+.login-box h1 {
+  text-align: center;
+  margin-bottom: 30px;
+  color: #1877f2;
+  font-size: 28px;
+}
+
+.input {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font-size: 14px;
+  transition: border-color 0.3s;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #1877f2;
+  box-shadow: 0 0 0 3px rgba(24, 119, 242, 0.1);
+}
+
+.btn-submit {
+  width: 100%;
+  padding: 12px;
+  background: #1877f2;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.3s;
+  margin-top: 10px;
+}
+
+.btn-submit:hover {
+  background: #165ec7;
+}
+
+.btn-submit:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.btn-toggle {
+  width: 100%;
+  padding: 12px;
+  background: none;
+  border: none;
+  color: #1877f2;
+  font-size: 14px;
+  cursor: pointer;
+  margin-top: 15px;
+  text-decoration: underline;
+}
+
+.btn-toggle:hover {
+  color: #165ec7;
+}
+
+.error {
+  background: #f8d7da;
+  color: #721c24;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 15px;
+  border: 1px solid #f5c6cb;
+}
+
+/* Main App */
+.container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.header {
+  background: white;
+  padding: 15px 20px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header h1 {
+  color: #1877f2;
+  font-size: 24px;
+}
+
+.header > div {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.header span {
+  font-weight: 600;
+  color: #050505;
+}
+
+.btn-logout {
+  padding: 8px 16px;
+  background: #f02849;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 0.3s;
+}
+
+.btn-logout:hover {
+  background: #c91d39;
+}
+
+.main {
+  flex: 1;
+  max-width: 600px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.create-post {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  margin-bottom: 20px;
+}
+
+.create-post form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.post-input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 100px;
+  transition: border-color 0.3s;
+}
+
+.post-input:focus {
+  outline: none;
+  border-color: #1877f2;
+  box-shadow: 0 0 0 3px rgba(24, 119, 242, 0.1);
+}
+
+.btn-post {
+  padding: 10px 20px;
+  background: #1877f2;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.3s;
+  align-self: flex-end;
+}
+
+.btn-post:hover {
+  background: #165ec7;
+}
+
+.btn-post:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+.posts {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.no-posts {
+  text-align: center;
+  color: #65676b;
+  padding: 40px 20px;
+  font-size: 14px;
+}
+
+.post {
+  background: white;
+  padding: 15px;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.post-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.post-header strong {
+  color: #050505;
+  font-size: 15px;
+}
+
+.post-date {
+  color: #65676b;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.btn-delete {
+  background: #f02849;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.3s;
+}
+
+.btn-delete:hover {
+  background: #c91d39;
+}
+
+.post-content {
+  color: #050505;
+  font-size: 15px;
+  line-height: 1.5;
+  margin-bottom: 12px;
+  word-wrap: break-word;
+}
+
+.post-actions {
+  display: flex;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.btn-action {
+  flex: 1;
+  padding: 8px;
+  background: none;
+  border: none;
+  color: #65676b;
+  cursor: pointer;
+  font-size: 13px;
+  border-radius: 4px;
+  transition: background 0.3s;
+}
+
+.btn-action:hover {
+  background: #f0f2f5;
+}
+
+.btn-action.liked {
+  color: #1877f2;
+  font-weight: 600;
+}
+
+.comments {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.comments strong {
+  color: #65676b;
+  font-size: 13px;
+}
+
+.comment {
+  color: #050505;
+  font-size: 13px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #f0f2f5;
+  border-radius: 6px;
+}
+
+.comment strong {
+  color: #050505;
+  font-weight: 600;
+}
+
+@media (max-width: 600px) {
+  .main {
+    padding: 10px;
+  }
+
+  .header {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .login-box {
+    margin: 20px;
+  }
+
+  .post {
+    padding: 12px;
+  }
+}
+7.4 Update API URL
+In src/App.js, find this line (near the top):
+const API_URL = 'http://localhost:5000';
+For now, leave it as is for local testing. Later you'll change it to your Railway URL.
+7.5 Test Frontend Locally
+In your terminal (inside facebook-clone-frontend folder):
+npm start
+Wait for it to open in browser (http://localhost:3000)
+Try:
+Click "Sign Up"
+Create a test account
+Write a post
+Refresh page - post should still be there!
+Try liking posts
+If this works, your frontend works! ✅
+PART 8: CHANGE API URL TO RAILWAY (2 MINUTES)
+8.1 Update App.js
+In src/App.js, change this line:
+const API_URL = 'http://localhost:5000';
+To:
+const API_URL = 'https://facebook-clone-backend-production.up.railway.app';
+Replace with your actual Railway URL from Part 6, Step 6.3
+8.2 Test Again
+In terminal:
+npm start
+Go to http://localhost:3000 and test again. Your frontend should now connect to the live backend!
+If it works, everything is connected! ✅
+PART 9: UPLOAD FRONTEND TO GITHUB (5 MINUTES)
+9.1 Create GitHub Repository
+Go to: https://github.com/new
+Repository name: facebook-clone-frontend
+Description: "Facebook clone frontend"
+Choose Public
+Click "Create repository"
+9.2 Upload Your Code
+In terminal (inside facebook-clone-frontend folder):
+git init
+git add .
+git commit -m "Initial commit"
+git branch -M main
+git remote add origin https://github.com/YOUR_USERNAME/facebook-clone-frontend.git
+git push -u origin main
+Replace YOUR_USERNAME with your GitHub username.
+9.3 Verify
+Go to: https://github.com/YOUR_USERNAME/facebook-clone-frontend
+You should see all your files there!
+✅ Frontend uploaded
+PART 10: DEPLOY FRONTEND TO VERCEL (5 MINUTES)
+10.1 Connect and Deploy
+Go to: https://vercel.com/dashboard
+Click "New Project"
+Click "Import GitHub Project"
+Search for facebook-clone-frontend
+Click on it
+Click "Import"
+Click "Deploy"
+Wait 2-3 minutes for deployment
+10.2 Get Your Live URL
+After deployment finishes, you'll see your URL:
+https://facebook-clone-frontend-YOUR_NAME.vercel.app
+Your app is LIVE! 🚀
+PART 11: FINAL TEST (5 MINUTES)
+11.1 Test Your Live App
+Go to your Vercel URL
+Click "Sign Up"
+Create a test account
+Write a post
+Refresh page - post should appear!
+Try liking and commenting
+If everything works, YOU'RE DONE! 🎉
+TROUBLESHOOTING
+Problem: Backend won't connect to MongoDB
+Check your MongoDB password in .env
+Go to MongoDB Atlas → Network Access → Make sure your IP is whitelisted
+Problem: Frontend can't reach backend
+Check your Railway URL is correct in App.js
+Make sure it starts with https:// not http://
+Problem: Deployment fails
+Check all files are pushed to GitHub
+Check .env variables are set on Railway/Vercel
+Check package.json has all dependencies
+Problem: Something else?
+Check the browser console (F12) for errors
+Check the terminal for error messages
+Make sure all steps were completed in order
+NEXT STEPS - ADD MORE FEATURES
+Once everything works, add:
+User profiles - See user info and their posts
+Follow system - Follow/unfollow users
+Direct messaging - Send private messages
+Image uploads - Upload photos with posts
+Search - Find posts and users
+Notifications - See who liked your posts
+Dark mode - Toggle dark/light theme
+SUMMARY CHECKLIST
+✅ Created GitHub, MongoDB, Railway, Vercel accounts
+✅ Installed Node.js, Git, VS Code
+✅ Created MongoDB database and user
+✅ Created and tested backend locally
+✅ Pushed backend to GitHub
+✅ Deployed backend to Railway
+✅ Created React frontend
+✅ Updated API URL to Railway
+✅ Tested frontend locally
+✅ Pushed frontend to GitHub
+✅ Deployed frontend to Vercel
+✅ Tested live app
+Congratulations! Your Facebook clone is LIVE! 🎊
